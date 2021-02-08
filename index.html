@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <!--
+    Reading the source code eh?
+    You may prefer https://github.com/camd67/ez-encrypt for easier reading.
+    That being said, this is NOT evidence of my code quality.
+    I'm writing this tool as fast as possible, with no dependencies, and fully rendered via github pages.
+
+    If you don't trust github I'd suggest not using this tool!
+     -->
+
+    <!--
+    This favicon was generated using the following graphics from Twitter Twemoji:
+    - Graphics Title: 1f510.svg
+    - Graphics Author: Copyright 2020 Twitter, Inc and other contributors (https://github.com/twitter/twemoji)
+    - Graphics Source: https://github.com/twitter/twemoji/blob/master/assets/svg/1f510.svg
+    - Graphics License: CC-BY 4.0 (https://creativecommons.org/licenses/by/4.0/)
+    -->
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+    <link rel="manifest" href="/site.webmanifest">
+
+    <title>EZ Encrypt</title>
+    <style>
+        body {
+            margin: 0;
+            font-family: sans-serif, Serif;
+        }
+
+        .warning-banner {
+            background-color: rgba(200, 200, 0, 0.5);
+            margin: 0;
+            padding: 10px;
+            text-align: center;
+        }
+
+        .error-banner {
+            background-color: rgba(200, 0, 0, 0.5);
+            margin: 0;
+            padding: 10px;
+            text-align: center;
+            display: none;
+        }
+
+        .output-banner {
+            background-color: rgba(0, 200, 0, 0.5);
+            margin: 0;
+            padding: 10px;
+            text-align: center;
+            display: none;
+        }
+
+        label {
+            display: block;
+            margin-top: 15px;
+        }
+
+        button {
+            margin-top: 15px;
+        }
+
+        section {
+            padding-left: 15px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="warning-banner">
+    Warning! This is a tool mostly for my own personal use. I'm not a security engineer.
+</div>
+<div class="error-banner"></div>
+<div class="output-banner"></div>
+
+<section class="encrypt">
+    <h1>Encrypt</h1>
+    <label>
+        File to Encrypt
+        <input type="file" id="encrypt" />
+    </label>
+    <label>
+        Encryption password
+        <input type="password" id="enc-password"/>
+    </label>
+    <button type="button" id="encrypt-button">Do Encrypt</button>
+</section>
+
+<section class="decrypt">
+    <h1>Decrypt</h1>
+    <label>
+        File to Decrypt
+        <input type="file" id="decrypt" />
+    </label>
+    <label>
+        Decryption password
+        <input type="password" id="dec-password"/>
+    </label>
+    <button type="button" id="decrypt-button">Do Decrypt</button>
+</section>
+
+<script>
+    const errorBanner = document.querySelector(".error-banner");
+    function showError(message) {
+        errorBanner.style.display = "block";
+        errorBanner.textContent = message;
+    }
+
+    const outputBanner = document.querySelector(".output-banner");
+    function showOutput(message) {
+        outputBanner.style.display = "block";
+        outputBanner.textContent = message;
+    }
+
+    function hideBanners() {
+        errorBanner.style.display = "none";
+        outputBanner.style.display = "none";
+    }
+
+    async function getKey(password, salt) {
+        const keyMaterial = await window.crypto.subtle.importKey(
+            "raw",
+            new TextEncoder().encode(password),
+            {name: "PBKDF2"},
+            false,
+            ["deriveKey"]
+        );
+        return window.crypto.subtle.deriveKey(
+            {
+                name: "PBKDF2",
+                salt,
+                iterations: 100000,
+                hash: "SHA-256"
+            },
+            keyMaterial,
+            {
+                name: "AES-GCM",
+                length: 256
+            },
+            false,
+            ["encrypt", "decrypt"]
+        );
+    }
+
+    /**@type {HTMLInputElement}*/
+    const encInput = document.querySelector("#encrypt");
+    /**@type {HTMLInputElement}*/
+    const encPasswordInput = document.querySelector("#enc-password");
+    document.querySelector("#encrypt-button").addEventListener("click", () => {
+        hideBanners();
+
+        // Validate stuff
+        if (encInput.files == null || encInput.files[0] == null) {
+            showError("No files set to upload. Please add a file in.");
+            return;
+        }
+        const password = encPasswordInput.value;
+        if (password == null || password === "") {
+            showError("Password is blank. You must provide a password to encrypt");
+            return;
+        }
+
+        // Read in the data (registering the callback for when it's done)
+        const reader = new FileReader();
+        reader.onload = () => {
+            if (typeof reader.result === "string") {
+                showError("Got an ArrayBuffer not a string for encryption. This is a bug... sorry!");
+                return;
+            }
+            const fileData = new Uint8Array(reader.result);
+            const salt = window.crypto.getRandomValues(new Uint8Array(32));
+            console.log(salt);
+            getKey(password, salt)
+            .then(encryptionKey => {
+                const iv = window.crypto.getRandomValues(new Uint8Array(16));
+                console.log(iv);
+                window.crypto.subtle.encrypt(
+                    {
+                        name: "AES-GCM",
+                        iv,
+                    },
+                    encryptionKey,
+                    fileData
+                )
+                .then(encrypted => {
+                    showOutput(`Your encrypted file is being prepared for download!`);
+                    const encryptedBytes = new Uint8Array(encrypted);
+                    const packedData = new Uint8Array(encryptedBytes.length + salt.length + iv.length);
+                    packedData.set(salt);
+                    packedData.set(iv, salt.length);
+                    packedData.set(encryptedBytes, salt.length + iv.length);
+                    const output = new Blob([packedData.buffer], {type: "application/octet-stream", endings: "transparent"});
+                    const link = document.createElement("a");
+                    link.href = URL.createObjectURL(output);
+                    link.download = `${encInput.files[0].name}.ez`
+                    link.click();
+                    URL.revokeObjectURL(link.href);
+                })
+                .catch(e => {
+                    showError(`An error occurred! ${e}`);
+                })
+                showOutput("Encrypting your content...");
+            })
+            .catch(e => {
+                showError(`An error occurred! ${e}`);
+            })
+            showOutput("Preparing your encryption key...");
+        }
+        reader.readAsArrayBuffer(encInput.files[0]);
+        showOutput("Reading your file...");
+    });
+
+    /**@type {HTMLInputElement}*/
+    const decInput = document.querySelector("#decrypt");
+    /**@type {HTMLInputElement}*/
+    const decPasswordInput = document.querySelector("#dec-password");
+    document.querySelector("#decrypt-button").addEventListener("click", () => {
+        hideBanners();
+
+        if (decInput.files == null || decInput.files[0] == null) {
+            showError("No files set to upload. Please add a file in.");
+            return;
+        }
+        const password = decPasswordInput.value;
+        if (password == null || password === "") {
+            showError("Password is blank. You must provide a password.");
+            return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = () => {
+            if (typeof reader.result === "string") {
+                showError("Got a string not an ArrayBuffer for encryption. This is a bug... sorry!");
+                return;
+            }
+
+            const rawBinData = new Uint8Array(reader.result);
+            const salt = rawBinData.slice(0, 32);
+            const iv = rawBinData.slice(32, 32 + 16);
+            const payload = rawBinData.slice(32 + 16);
+
+            getKey(password, salt)
+            .then(encryptionKey => {
+                window.crypto.subtle.decrypt(
+                    {
+                        name: "AES-GCM",
+                        iv,
+                    },
+                    encryptionKey,
+                    payload
+                )
+                .then(decrypted => {
+                    showOutput("Your decrypted file is being prepared for download!")
+                    const blob = new Blob([decrypted], {type: "application/octet-stream"});
+                    const link = document.createElement("a");
+                    link.href = URL.createObjectURL(blob);
+                    link.download = decInput.files[0].name.replace(/\.ez$/, "");
+                    link.click();
+                    URL.revokeObjectURL(link.href);
+                })
+                .catch(e => {
+                    showError(`An error occurred! ${e}`);
+                })
+                showOutput("Decrypting your data...");
+            })
+            .catch(e => {
+                showError(`An error occurred! ${e}`);
+            })
+            showOutput("Preparing your encryption key...");
+        }
+        reader.readAsArrayBuffer(decInput.files[0]);
+        showOutput("Reading your file...");
+    });
+</script>
+</body>
+</html>
